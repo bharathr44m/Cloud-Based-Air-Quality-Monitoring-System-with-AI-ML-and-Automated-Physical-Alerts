@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Quality AI Monitor — Industrial IoT Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root {
+            --bs-body-bg: #f3f6f9;
+            --primary-accent: #0f172a;
+        }
+        body { background-color: var(--bs-body-bg); font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; color: #212529; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.04); margin-bottom: 20px; background: #ffffff; }
+        .card-header { background: #ffffff; border-bottom: 1px solid #edf2f7; font-weight: 600; border-radius: 12px 12px 0 0 !important; padding: 14px 18px; }
+        .status-badge { font-size: 0.8rem; padding: 5px 12px; border-radius: 20px; font-weight: 500; }
+        
+        /* Metric Summary Cards */
+        .kpi-card { border-radius: 10px; border-left: 4px solid #adb5bd; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+        .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.07); }
+        .kpi-card.kpi-gas { border-left-color: #f59e0b; }
+        .kpi-card.kpi-temp { border-left-color: #06b6d4; }
+        .kpi-card.kpi-humidity { border-left-color: #3b82f6; }
+        .kpi-card.kpi-buzzer { border-left-color: #ef4444; }
+        .kpi-card.kpi-ml { border-left-color: #8b5cf6; }
+        .kpi-card.kpi-score { border-left-color: #10b981; }
+        
+        .kpi-title { font-size: 0.76rem; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 1.65rem; font-weight: 700; color: #0f172a; line-height: 1.2; margin: 4px 0 2px 0; }
+        .kpi-subtitle { font-size: 0.72rem; color: #94a3b8; }
+        
+        /* Table tags */
+        .anomaly-row { background-color: #fef2f2 !important; color: #991b1b !important; }
+        .anomaly-tag { background: #dc2626; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+        .normal-tag  { background: #16a34a; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .unscored-tag{ background: #64748b; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
+        
+        /* Metadata bar */
+        .meta-strip { background: #ffffff; border-radius: 10px; padding: 10px 18px; border: 1px solid #e2e8f0; font-size: 0.8rem; }
+        .meta-item { display: inline-flex; align-items: center; gap: 6px; margin-right: 20px; }
+        .meta-label { color: #64748b; font-weight: 500; }
+        .meta-val { font-weight: 700; color: #1e293b; }
+        
+        /* Training progress steps */
+        .step-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.83rem; }
+        .step-icon { width: 22px; text-align: center; }
+        .step-done    { color: #16a34a; font-weight: 500; }
+        .step-active  { color: #2563eb; font-weight: 700; }
+        .step-pending { color: #94a3b8; }
+        .step-fail    { color: #dc2626; font-weight: 600; }
+        
+        #exec-timer { font-size: 1.6rem; font-weight: 700; letter-spacing: 2px; color: #0284c7; }
+        .vg-row { display: flex; justify-content: space-between; font-size: 0.8rem; border-bottom: 1px solid #f1f5f9; padding: 4px 0; }
+        .vg-key { color: #64748b; }
+        .vg-val { font-weight: 600; color: #1e293b; }
+        
+        .badge-buzzer-on { background: #ef4444; color: #fff; animation: pulse 1.5s infinite; }
+        .badge-buzzer-off { background: #e2e8f0; color: #475569; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.65; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm py-2">
+    <div class="container-fluid px-4">
+        <div>
+            <a class="navbar-brand fw-bold mb-0" href="#">
+                <i class="fa-solid fa-wind text-info me-2"></i>Air Quality AI Monitor
+            </a>
+            <span class="d-none d-md-inline-block text-secondary small ms-2 ps-2 border-start border-secondary">
+                Industrial IoT Telemetry &amp; Isolation Forest ML
+            </span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span id="realtime-badge" class="badge bg-secondary status-badge">
+                <i class="fa-solid fa-wifi me-1"></i>Connecting…
+            </span>
+            <span id="freshness-badge" class="badge bg-secondary status-badge">
+                <i class="fa-solid fa-clock me-1"></i>Data Status: --
+            </span>
+            <span id="backend-badge" class="badge bg-secondary status-badge" style="cursor: pointer;" onclick="openBackendConfigModal()" title="Click to configure ML Backend URL">
+                <i class="fa-solid fa-server me-1"></i>ML Backend: Checking…
+            </span>
+            <button class="btn btn-sm btn-outline-light py-0 px-2" style="font-size: 0.8rem;" onclick="openBackendConfigModal()" title="Configure Backend API URL">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+        </div>
+    </div>
+</nav>
+
+<!-- BACKEND CONFIG MODAL -->
+<div class="modal fade" id="backendConfigModal" tabindex="-1" aria-labelledby="backendConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="backendConfigModalLabel">
+                    <i class="fa-solid fa-network-wired text-primary me-2"></i>Configure ML Backend URL
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted mb-3">
+                    GitHub Pages hosts static files and cannot run the Python FastAPI backend. When accessing this dashboard online, enter your deployed ML backend URL (e.g. Render, Railway, ngrok, or local network tunnel).
+                </p>
+                <div class="mb-3">
+                    <label for="customBackendUrlInput" class="form-label small fw-semibold">ML Backend Base URL:</label>
+                    <input type="text" class="form-control form-control-sm" id="customBackendUrlInput" placeholder="http://localhost:8001 or https://your-backend.onrender.com">
+                    <div class="form-text small">Do not include a trailing slash (e.g. <code>http://localhost:8001</code>).</div>
+                </div>
+                <div id="backendTestResult" class="small mt-2" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetBackendUrl()">Reset to Default</button>
+                <button type="button" class="btn btn-sm btn-info text-white" onclick="testCustomBackendUrl()">Test Connection</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="saveCustomBackendUrl()">Save &amp; Connect</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid px-4 my-4">
+
+    <!-- CORE PARAMETERS SUMMARY CARDS -->
+    <div class="row g-3 mb-3">
+        <!-- 1. Gas Sensor (est.) -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-gas">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">Gas Sensor (est.)</span>
+                    <i class="fa-solid fa-smog text-warning fs-5"></i>
+                </div>
+                <div class="kpi-value" id="card-gas">--</div>
+                <div class="kpi-subtitle">
+                    MQ135 ADC estimate (uncalibrated)
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Temperature -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-temp">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">Temperature</span>
+                    <i class="fa-solid fa-temperature-half text-info fs-5"></i>
+                </div>
+                <div class="kpi-value" id="card-temp">--</div>
+                <div class="kpi-subtitle">DHT11 sensor (°C)</div>
+            </div>
+        </div>
+
+        <!-- 3. Humidity -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-humidity">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">Humidity</span>
+                    <i class="fa-solid fa-droplet text-primary fs-5"></i>
+                </div>
+                <div class="kpi-value" id="card-humidity">--</div>
+                <div class="kpi-subtitle">Relative humidity (%)</div>
+            </div>
+        </div>
+
+        <!-- 4. Hardware Buzzer Status -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-buzzer">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">Hardware Buzzer</span>
+                    <i class="fa-solid fa-bell text-danger fs-5"></i>
+                </div>
+                <div class="mt-2" id="card-buzzer">
+                    <span class="badge badge-buzzer-off fs-6 px-3 py-1">OFF</span>
+                </div>
+                <div class="kpi-subtitle mt-1">Local ESP32 alert (>=650)</div>
+            </div>
+        </div>
+
+        <!-- 5. ML Prediction -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-ml">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">ML Prediction</span>
+                    <i class="fa-solid fa-brain text-purple fs-5" style="color:#8b5cf6;"></i>
+                </div>
+                <div class="mt-2" id="card-ml-pred">
+                    <span class="unscored-tag fs-6">UNSCORED</span>
+                </div>
+                <div class="kpi-subtitle mt-1">Isolation Forest classification</div>
+            </div>
+        </div>
+
+        <!-- 6. Anomaly Score -->
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            <div class="card p-3 h-100 kpi-card kpi-score">
+                <div class="d-flex justify-content-between align-items-start">
+                    <span class="kpi-title">Anomaly Score</span>
+                    <i class="fa-solid fa-chart-line text-success fs-5"></i>
+                </div>
+                <div class="kpi-value" id="card-score">--</div>
+                <div class="kpi-subtitle" title="Scores < 0 denote anomalies; scores > 0 denote normal readings">
+                    Decision func (&lt;0 Anomaly, &gt;0 Normal)
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- METADATA & TELEMETRY STATUS STRIP -->
+    <div class="meta-strip mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div>
+            <div class="meta-item">
+                <span class="meta-label"><i class="fa-regular fa-clock me-1"></i>Latest Record:</span>
+                <span class="meta-val" id="meta-latest-ts">--</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label"><i class="fa-solid fa-database me-1"></i>Total Ingested:</span>
+                <span class="meta-val" id="meta-total-records">--</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label"><i class="fa-solid fa-microchip me-1"></i>Model Version:</span>
+                <span class="meta-val" id="meta-model-version">None</span>
+            </div>
+        </div>
+        <div>
+            <div class="meta-item">
+                <span class="meta-label"><i class="fa-solid fa-calendar-check me-1"></i>Last Trained:</span>
+                <span class="meta-val" id="meta-trained-at">--</span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label"><i class="fa-solid fa-chart-pie me-1"></i>Training Dataset:</span>
+                <span class="meta-val" id="meta-dataset-info">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MIDDLE ROW: CHART & ML ENGINE -->
+    <div class="row">
+        <!-- LIVE SENSOR TELEMETRY CHART -->
+        <div class="col-lg-8">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <i class="fa-solid fa-chart-line text-primary me-2"></i>
+                        <strong>Live Sensor Telemetry</strong>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <label class="small text-muted mb-0">Records:</label>
+                        <select class="form-select form-select-sm" id="chartLimitSelect" style="width: auto;" onchange="fetchSensorData()">
+                            <option value="30" selected>Latest 30</option>
+                            <option value="50">Latest 50</option>
+                            <option value="100">Latest 100</option>
+                        </select>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="fetchSensorData()" title="Refresh Chart">
+                            <i class="fa-solid fa-rotate"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div style="position:relative; height:340px; width:100%;">
+                        <canvas id="sensorChart"></canvas>
+                    </div>
+                    <div class="alert alert-light border small mt-3 mb-0 text-muted d-flex align-items-center gap-2 py-2">
+                        <i class="fa-solid fa-circle-info text-primary"></i>
+                        <div>
+                            <strong>Axis Separation Note:</strong> <em>Gas Sensor (est.)</em> is plotted on the left Y-axis, while <em>Temperature (°C)</em> and <em>Humidity (%)</em> are plotted on the right Y-axis so gas values do not visually flatten ambient readings.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ISOLATION FOREST ML ENGINE PANEL -->
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="fa-solid fa-robot text-danger me-2"></i>Isolation Forest ML Engine</span>
+                    <span id="phase-badge" class="badge bg-secondary">IDLE</span>
+                </div>
+                <div class="card-body d-flex flex-column gap-3">
+
+                    <!-- TRAINING SECTION -->
+                    <div>
+                        <label class="form-label fw-semibold small text-muted text-uppercase mb-1">
+                            1. Historical Training Window
+                            <i class="fa-solid fa-circle-info ms-1" title="Selects the UTC snapshot historical window to fetch for training. Does not delay training."></i>
+                        </label>
+                        <div class="input-group input-group-sm mb-1">
+                            <select class="form-select" id="timeWindowSelect">
+                                <option value="15">Last 15 Minutes</option>
+                                <option value="30">Last 30 Minutes</option>
+                                <option value="60" selected>Last 1 Hour (Default)</option>
+                                <option value="120">Last 2 Hours</option>
+                                <option value="360">Last 6 Hours</option>
+                                <option value="720">Last 12 Hours</option>
+                                <option value="1440">Last 24 Hours</option>
+                            </select>
+                            <button id="btn-start-train" class="btn btn-success fw-bold px-3" onclick="startTraining()">
+                                <i class="fa-solid fa-play me-1"></i>Train Model
+                            </button>
+                        </div>
+                        <p class="text-muted mb-0" style="font-size:0.72rem;">
+                            Single-shot snapshot query (requires >=20 rows and >=90% temporal coverage).
+                        </p>
+                    </div>
+
+                    <!-- TRAINING PROGRESS DISPLAY -->
+                    <div class="border rounded p-3 bg-light">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-secondary fw-semibold small"><i class="fa-solid fa-gears me-1"></i>Execution Pipeline</span>
+                            <span class="small text-muted" id="pipeline-status-text">Ready</span>
+                        </div>
+
+                        <!-- Step-by-step progress -->
+                        <div id="steps-panel">
+                            <div class="step-row step-pending" id="step-fetch">
+                                <span class="step-icon"><i class="fa-solid fa-circle"></i></span>
+                                <span>Fetch window records from Supabase</span>
+                            </div>
+                            <div class="step-row step-pending" id="step-validate">
+                                <span class="step-icon"><i class="fa-solid fa-circle"></i></span>
+                                <span>Validate temporal coverage &amp; cleanse data</span>
+                            </div>
+                            <div class="step-row step-pending" id="step-train">
+                                <span class="step-icon"><i class="fa-solid fa-circle"></i></span>
+                                <span>Fit Isolation Forest estimator</span>
+                            </div>
+                            <div class="step-row step-pending" id="step-save">
+                                <span class="step-icon"><i class="fa-solid fa-circle"></i></span>
+                                <span>Persist model &amp; metadata atomically</span>
+                            </div>
+                        </div>
+
+                        <!-- Actual compute execution timer -->
+                        <div class="text-center mt-2 pt-2 border-top">
+                            <div id="exec-timer">--:--</div>
+                            <div class="stat-label small text-muted">Compute Execution Duration</div>
+                        </div>
+                    </div>
+
+                    <!-- LIVE SCORING SECTION -->
+                    <div class="border rounded p-3 bg-white">
+                        <label class="form-label fw-semibold small text-muted text-uppercase mb-2">
+                            2. Live Anomaly Scoring
+                        </label>
+                        <button id="btn-score-latest" class="btn btn-primary btn-sm w-100 fw-bold mb-2" onclick="runLiveScoring()">
+                            <i class="fa-solid fa-wand-magic-sparkles me-1"></i>Score Recent Readings Now
+                        </button>
+                        <div class="form-check form-switch mb-1">
+                            <input class="form-check-input" type="checkbox" id="autoScoreToggle" checked>
+                            <label class="form-check-label small" for="autoScoreToggle">
+                                Auto-score incoming readings on arrival
+                            </label>
+                        </div>
+                        <div id="scoring-status" class="small text-muted">
+                            <i class="fa-solid fa-circle-check text-success me-1"></i>Scoring engine ready.
+                        </div>
+                    </div>
+
+                    <!-- RESULT PANEL (Shown after successful training) -->
+                    <div id="result-panel" class="border rounded p-3 bg-white" style="display:none;">
+                        <div class="fw-semibold small text-muted text-uppercase mb-2">
+                            <i class="fa-solid fa-clipboard-check text-success me-1"></i>Last Training Result
+                        </div>
+                        <div id="result-grid"></div>
+                        <div id="result-warning" class="alert alert-warning py-1 px-2 mt-2 small" style="display:none;"></div>
+                        <p class="text-muted mt-2 mb-0" style="font-size:0.7rem;">
+                            <i class="fa-solid fa-info-circle me-1"></i>
+                            Isolation Forest is unsupervised. No accuracy/precision/recall metrics are computed without ground-truth labels.
+                        </p>
+                    </div>
+
+                    <!-- ERROR PANEL -->
+                    <div id="error-panel" class="alert alert-danger py-2 px-3 small" style="display:none;">
+                        <i class="fa-solid fa-circle-xmark me-1"></i>
+                        <strong>Training Blocked:</strong> <span id="error-msg"></span>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RECENT SENSOR READINGS TABLE -->
+    <div class="row mt-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <i class="fa-solid fa-table me-2 text-secondary"></i>
+                        <strong>Recent Sensor Ingestions &amp; ML Scoring</strong>
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="small text-muted d-none d-md-flex align-items-center gap-2">
+                            <span><span class="normal-tag me-1">NORMAL</span> Score &gt; 0</span>
+                            <span><span class="anomaly-tag me-1">ANOMALY</span> Score &lt; 0</span>
+                            <span><span class="unscored-tag me-1">UNSCORED</span> Awaiting Score</span>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" onclick="fetchSensorData()">
+                            <i class="fa-solid fa-rotate me-1"></i>Refresh Table
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" id="sensor-table">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Timestamp (Local)</th>
+                                    <th>Gas Sensor (est.)</th>
+                                    <th>Temp (°C)</th>
+                                    <th>Humidity (%)</th>
+                                    <th>Hardware Buzzer</th>
+                                    <th>ML Prediction</th>
+                                    <th>Anomaly Score</th>
+                                    <th>Status Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-body">
+                                <tr><td colspan="9" class="text-center py-4 text-muted">Loading telemetry records…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const SUPABASE_URL      = "https://ppvtqsyhiuabvxjtxtyp.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_DJxaBgoKqZaKefyxaZJ8jQ_UwPO3br6";
+const DEFAULT_LOCAL_BACKEND = "http://localhost:8001";
+let   ML_BACKEND_URL    = localStorage.getItem("air_quality_ml_backend_url") || DEFAULT_LOCAL_BACKEND;
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let sensorChart   = null;
+let execTimerInt  = null;
+let execStartMs   = null;
+let statusPollInt = null;
+let activeModelAvailable = false;
+let activeModelVersion = null;
+let backendModalInstance = null;
+
+// ============================================================
+// BACKEND CONFIG MODAL & PERSISTENCE
+// ============================================================
+function openBackendConfigModal() {
+    const input = document.getElementById('customBackendUrlInput');
+    if (input) input.value = ML_BACKEND_URL;
+    const res = document.getElementById('backendTestResult');
+    if (res) res.style.display = 'none';
+    if (!backendModalInstance && typeof bootstrap !== 'undefined') {
+        backendModalInstance = new bootstrap.Modal(document.getElementById('backendConfigModal'));
+    }
+    if (backendModalInstance) backendModalInstance.show();
+}
+
+function resetBackendUrl() {
+    localStorage.removeItem("air_quality_ml_backend_url");
+    ML_BACKEND_URL = DEFAULT_LOCAL_BACKEND;
+    const input = document.getElementById('customBackendUrlInput');
+    if (input) input.value = DEFAULT_LOCAL_BACKEND;
+    const res = document.getElementById('backendTestResult');
+    if (res) {
+        res.className = 'small text-muted mt-2';
+        res.innerHTML = '<i class="fa-solid fa-circle-info me-1"></i>Reset to default: ' + DEFAULT_LOCAL_BACKEND;
+        res.style.display = 'block';
+    }
+}
+
+async function testCustomBackendUrl() {
+    const input = document.getElementById('customBackendUrlInput');
+    const testUrl = (input ? input.value : ML_BACKEND_URL).trim().replace(/\/+$/, '');
+    const res = document.getElementById('backendTestResult');
+    if (!res) return;
+    res.className = 'small text-primary mt-2';
+    res.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Testing connection to ' + testUrl + '…';
+    res.style.display = 'block';
+
+    try {
+        const r = await fetch(`${testUrl}/health`, { method: 'GET', signal: AbortSignal.timeout(3000) });
+        if (r.ok) {
+            const data = await r.json();
+            res.className = 'small text-success mt-2';
+            res.innerHTML = `<i class="fa-solid fa-circle-check me-1"></i>Connected! Backend Online (Model: ${data.model_loaded ? 'v' + data.model_version : 'None'})`;
+        } else {
+            res.className = 'small text-danger mt-2';
+            res.innerHTML = `<i class="fa-solid fa-triangle-exclamation me-1"></i>Backend responded with HTTP ${r.status}`;
+        }
+    } catch (e) {
+        res.className = 'small text-danger mt-2';
+        res.innerHTML = `<i class="fa-solid fa-circle-xmark me-1"></i>Failed to connect. Check URL, CORS configuration, and ensure server is running.`;
+    }
+}
+
+async function saveCustomBackendUrl() {
+    const input = document.getElementById('customBackendUrlInput');
+    let url = (input ? input.value : '').trim().replace(/\/+$/, '');
+    if (!url) url = DEFAULT_LOCAL_BACKEND;
+    ML_BACKEND_URL = url;
+    localStorage.setItem("air_quality_ml_backend_url", url);
+    if (backendModalInstance) backendModalInstance.hide();
+    await detectBackendPort();
+}
+
+// ============================================================
+// BACKEND PORT DETECTION & HEALTH CHECK
+// ============================================================
+async function detectBackendPort() {
+    const badge = document.getElementById('backend-badge');
+    
+    // First, test configured URL (custom or default)
+    try {
+        const r = await fetch(`${ML_BACKEND_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
+        if (r.ok) {
+            const data = await r.json();
+            badge.className = 'badge bg-success status-badge';
+            const displayLabel = ML_BACKEND_URL.includes('localhost') ? `Local (${ML_BACKEND_URL.split(':').pop()})` : 'Connected';
+            badge.innerHTML = `<i class="fa-solid fa-server me-1"></i>Backend: ${displayLabel}`;
+            activeModelAvailable = data.model_loaded === true;
+            activeModelVersion = data.model_version || null;
+            return true;
+        }
+    } catch (_) {}
+
+    // Fallback: test common local ports (8001, 8000) if configured was default
+    if (ML_BACKEND_URL === DEFAULT_LOCAL_BACKEND) {
+        for (const port of [8001, 8000]) {
+            try {
+                const r = await fetch(`http://localhost:${port}/health`, { method:'GET', signal: AbortSignal.timeout(1500) });
+                if (r.ok) {
+                    const data = await r.json();
+                    ML_BACKEND_URL = `http://localhost:${port}`;
+                    badge.className = 'badge bg-success status-badge';
+                    badge.innerHTML = `<i class="fa-solid fa-server me-1"></i>Backend: Port ${port}`;
+                    activeModelAvailable = data.model_loaded === true;
+                    activeModelVersion = data.model_version || null;
+                    return true;
+                }
+            } catch (_) {}
+        }
+    }
+
+    badge.className = 'badge bg-secondary status-badge';
+    badge.innerHTML = '<i class="fa-solid fa-gear me-1"></i>Backend: Configure';
+    return false;
+}
+
+// ============================================================
+// CHART INITIALIZATION
+// ============================================================
+function initChart() {
+    const ctx = document.getElementById('sensorChart').getContext('2d');
+    sensorChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Gas Sensor (est.)',
+                    data: [],
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.25,
+                    yAxisID: 'yAQI'
+                },
+                {
+                    label: 'Temperature (°C)',
+                    data: [],
+                    borderColor: '#06b6d4',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    tension: 0.25,
+                    yAxisID: 'yEnv'
+                },
+                {
+                    label: 'Humidity (%)',
+                    data: [],
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    tension: 0.25,
+                    yAxisID: 'yEnv'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 12 }
+                },
+                yAQI: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: { display: true, text: 'Gas Sensor (est.) [MQ135 ADC]' },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                yEnv: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    title: { display: true, text: 'Temperature (°C) / Humidity (%)' }
+                }
+            }
+        }
+    });
+}
+
+// ============================================================
+// FETCH SENSOR DATA + JOIN PREDICTIONS + UPDATE METRICS
+// ============================================================
+async function fetchSensorData() {
+    try {
+        const limit = parseInt(document.getElementById('chartLimitSelect')?.value || '30');
+
+        // Fetch sensor rows
+        const { data: sensorRows, error } = await supabaseClient
+            .from('sensor_data')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+
+        if (error || !sensorRows || !sensorRows.length) {
+            document.getElementById('table-body').innerHTML =
+                '<tr><td colspan="9" class="text-center py-4 text-muted">No sensor data available in database.</td></tr>';
+            return;
+        }
+
+        // Query total record count for metadata strip
+        try {
+            const { count } = await supabaseClient
+                .from('sensor_data')
+                .select('*', { count: 'exact', head: true });
+            if (count != null) {
+                document.getElementById('meta-total-records').innerText = count.toLocaleString();
+            }
+        } catch (_) {}
+
+        // Query matching predictions by sensor_data_id
+        const ids = sensorRows.map(r => r.id);
+        let predMap = {};
+        try {
+            const { data: preds } = await supabaseClient
+                .from('ml_predictions')
+                .select('sensor_data_id, is_anomaly, anomaly_score, model_version')
+                .in('sensor_data_id', ids);
+            (preds || []).forEach(p => { predMap[p.sensor_data_id] = p; });
+        } catch (e) {
+            console.warn('[fetchSensorData] Predictions query error:', e);
+        }
+
+        // Update Top Summary Cards with latest row
+        updateSummaryCards(sensorRows[0], predMap[sensorRows[0].id]);
+
+        // Render Table & Chart
+        renderTable(sensorRows, predMap);
+        renderChart(sensorRows);
+
+    } catch (e) {
+        console.error('[fetchSensorData] Error:', e);
+    }
+}
+
+// ============================================================
+// TOP SUMMARY CARDS RENDER
+// ============================================================
+function updateSummaryCards(latest, latestPred) {
+    if (!latest) return;
+
+    // 1. Gas Sensor (est.)
+    document.getElementById('card-gas').innerText =
+        latest.aqi_ppm != null ? latest.aqi_ppm.toFixed(1) : '--';
+
+    // 2. Temperature
+    document.getElementById('card-temp').innerText =
+        latest.temperature != null ? `${latest.temperature.toFixed(1)} °C` : '--';
+
+    // 3. Humidity
+    document.getElementById('card-humidity').innerText =
+        latest.humidity != null ? `${latest.humidity.toFixed(1)} %` : '--';
+
+    // 4. Hardware Buzzer Status
+    const buzzerEl = document.getElementById('card-buzzer');
+    if (latest.buzzer_triggered) {
+        buzzerEl.innerHTML = '<span class="badge badge-buzzer-on fs-6 px-3 py-1"><i class="fa-solid fa-volume-high me-1"></i>ON (ALERT)</span>';
+    } else {
+        buzzerEl.innerHTML = '<span class="badge badge-buzzer-off fs-6 px-3 py-1"><i class="fa-solid fa-volume-xmark me-1"></i>OFF (QUIET)</span>';
+    }
+
+    // 5. ML Prediction & 6. Score
+    const mlEl = document.getElementById('card-ml-pred');
+    const scoreEl = document.getElementById('card-score');
+
+    if (latestPred) {
+        if (latestPred.is_anomaly === true) {
+            mlEl.innerHTML = '<span class="anomaly-tag fs-6"><i class="fa-solid fa-triangle-exclamation me-1"></i>ANOMALY</span>';
+        } else {
+            mlEl.innerHTML = '<span class="normal-tag fs-6"><i class="fa-solid fa-circle-check me-1"></i>NORMAL</span>';
+        }
+        const s = parseFloat(latestPred.anomaly_score);
+        scoreEl.innerText = (s >= 0 ? '+' : '') + s.toFixed(4);
+        scoreEl.className = s < 0 ? 'kpi-value text-danger' : 'kpi-value text-success';
+    } else {
+        mlEl.innerHTML = '<span class="unscored-tag fs-6">UNSCORED</span>';
+        scoreEl.innerText = '--';
+        scoreEl.className = 'kpi-value text-muted';
+    }
+
+    // Update Telemetry Timestamp & Freshness
+    const recordDate = new Date(latest.created_at);
+    document.getElementById('meta-latest-ts').innerText = recordDate.toLocaleString();
+
+    const diffSeconds = Math.max(0, Math.floor((Date.now() - recordDate.getTime()) / 1000));
+    const freshnessBadge = document.getElementById('freshness-badge');
+    if (diffSeconds < 35) {
+        freshnessBadge.className = 'badge bg-success status-badge';
+        freshnessBadge.innerHTML = `<i class="fa-solid fa-satellite-dish me-1"></i>Sensor Live (${diffSeconds}s ago)`;
+    } else if (diffSeconds < 180) {
+        freshnessBadge.className = 'badge bg-warning text-dark status-badge';
+        freshnessBadge.innerHTML = `<i class="fa-solid fa-clock me-1"></i>Recent (${diffSeconds}s ago)`;
+    } else {
+        const minAgo = Math.floor(diffSeconds / 60);
+        freshnessBadge.className = 'badge bg-secondary status-badge';
+        freshnessBadge.innerHTML = `<i class="fa-solid fa-clock-rotate-left me-1"></i>Stale (${minAgo}m ago)`;
+    }
+}
+
+// ============================================================
+// TABLE RENDER
+// ============================================================
+function renderTable(rows, predMap) {
+    const tbody = document.getElementById('table-body');
+    let html = '';
+
+    rows.forEach(r => {
+        const pred   = predMap[r.id];
+        const hasPred = pred != null;
+        const isAnom  = hasPred && pred.is_anomaly === true;
+
+        let rowCls = '';
+        let badge  = '<span class="unscored-tag">UNSCORED</span>';
+        let statusReason = '<span class="text-muted small">Awaiting live scoring</span>';
+
+        if (hasPred) {
+            if (isAnom) {
+                rowCls = 'anomaly-row';
+                badge  = '<span class="anomaly-tag"><i class="fa-solid fa-triangle-exclamation me-1"></i>ANOMALY</span>';
+                statusReason = '<span class="text-danger small fw-semibold">Isolation Forest outlier (score &lt; 0)</span>';
+            } else {
+                badge = '<span class="normal-tag"><i class="fa-solid fa-check me-1"></i>NORMAL</span>';
+                statusReason = '<span class="text-success small">Within normal cluster (score &gt; 0)</span>';
+            }
+        } else {
+            if (!activeModelAvailable) {
+                statusReason = '<span class="text-muted small">No active model trained</span>';
+            }
+        }
+
+        const ts = new Date(r.created_at).toLocaleString();
+        const buzzer = r.buzzer_triggered
+            ? '<span class="badge bg-danger"><i class="fa-solid fa-bell me-1"></i>ON</span>'
+            : '<span class="badge bg-light text-muted border">OFF</span>';
+
+        const score = hasPred
+            ? `<code>${(pred.anomaly_score >= 0 ? '+' : '') + parseFloat(pred.anomaly_score).toFixed(4)}</code>`
+            : '<span class="text-muted">--</span>';
+
+        html += `<tr class="${rowCls}">
+            <td class="fw-semibold text-secondary">#${r.id}</td>
+            <td style="white-space:nowrap;">${ts}</td>
+            <td><strong>${r.aqi_ppm != null ? r.aqi_ppm.toFixed(1) : '—'}</strong></td>
+            <td>${r.temperature != null ? r.temperature.toFixed(1) : '—'}</td>
+            <td>${r.humidity != null ? r.humidity.toFixed(1) : '—'}</td>
+            <td>${buzzer}</td>
+            <td>${badge}</td>
+            <td>${score}</td>
+            <td>${statusReason}</td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+}
+
+// ============================================================
+// CHART RENDER
+// ============================================================
+function renderChart(rows) {
+    if (!sensorChart) return;
+    const sorted = [...rows].reverse();
+    sensorChart.data.labels = sorted.map(r =>
+        new Date(r.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+    );
+    sensorChart.data.datasets[0].data = sorted.map(r => r.aqi_ppm);
+    sensorChart.data.datasets[1].data = sorted.map(r => r.temperature);
+    sensorChart.data.datasets[2].data = sorted.map(r => r.humidity);
+    sensorChart.update('none');
+}
+
+// ============================================================
+// LIVE SCORING INVOCATION
+// ============================================================
+async function runLiveScoring(limit = 100) {
+    const btn = document.getElementById('btn-score-latest');
+    const statusEl = document.getElementById('scoring-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1 text-primary"></i>Running Isolation Forest live evaluation…';
+
+    try {
+        await detectBackendPort();
+        const resp = await fetch(`${ML_BACKEND_URL}/score/latest?limit=${limit}`, {
+            method: 'POST'
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.status === 'success') {
+            const anomCount = data.anomaly_count || 0;
+            const scored = data.scored_count || 0;
+            if (statusEl) {
+                statusEl.innerHTML = `<span class="text-success"><i class="fa-solid fa-circle-check me-1"></i>Scored ${scored} records (${anomCount} anomalies) with v${data.model_version}</span>`;
+            }
+            await fetchSensorData();
+        } else {
+            const err = data.detail || data.message || 'Scoring endpoint returned error.';
+            if (statusEl) {
+                statusEl.innerHTML = `<span class="text-danger"><i class="fa-solid fa-triangle-exclamation me-1"></i>${err}</span>`;
+            }
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-xmark me-1"></i>Cannot reach ML backend</span>';
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ============================================================
+// REALTIME SUBSCRIPTIONS
+// ============================================================
+function setupRealtime() {
+    const badge = document.getElementById('realtime-badge');
+    supabaseClient
+        .channel('sensor_and_preds')
+        .on('postgres_changes', { event:'*', schema:'public', table:'sensor_data' }, async () => {
+            await fetchSensorData();
+            const autoScore = document.getElementById('autoScoreToggle')?.checked;
+            if (autoScore && activeModelAvailable) {
+                runLiveScoring(10);
+            }
+        })
+        .on('postgres_changes', { event:'*', schema:'public', table:'ml_predictions' }, () => {
+            fetchSensorData();
+        })
+        .subscribe(status => {
+            if (status === 'SUBSCRIBED') {
+                badge.className = 'badge bg-success status-badge';
+                badge.innerHTML = '<i class="fa-solid fa-wifi me-1"></i>Realtime Connected';
+            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                badge.className = 'badge bg-warning text-dark status-badge';
+                badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation me-1"></i>Polling Active';
+            }
+        });
+}
+
+// ============================================================
+// EXECUTION TIMER
+// ============================================================
+function startExecTimer() {
+    execStartMs = Date.now();
+    const el = document.getElementById('exec-timer');
+    if (execTimerInt) clearInterval(execTimerInt);
+    execTimerInt = setInterval(() => {
+        const s = (Date.now() - execStartMs) / 1000;
+        el.innerText = fmtSeconds(s);
+    }, 100);
+}
+
+function stopExecTimer(finalSeconds) {
+    if (execTimerInt) { clearInterval(execTimerInt); execTimerInt = null; }
+    document.getElementById('exec-timer').innerText =
+        finalSeconds != null ? fmtSeconds(finalSeconds) : '--:--';
+}
+
+function fmtSeconds(s) {
+    const m = Math.floor(s / 60);
+    const ss = (s % 60).toFixed(2).padStart(5, '0');
+    return String(m).padStart(2, '0') + ':' + ss;
+}
+
+// ============================================================
+// TRAINING PIPELINE PROGRESS STEPS
+// ============================================================
+const STEP_IDS = ['step-fetch', 'step-validate', 'step-train', 'step-save'];
+
+function resetSteps() {
+    STEP_IDS.forEach(id => setStep(id, 'pending'));
+    document.getElementById('pipeline-status-text').innerText = 'Initializing…';
+}
+
+function setStep(id, state) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'step-row step-' + state;
+    const icon = el.querySelector('.step-icon i');
+    if (!icon) return;
+    const icons = {
+        pending: 'fa-circle',
+        active: 'fa-spinner fa-spin',
+        done: 'fa-circle-check',
+        fail: 'fa-circle-xmark'
+    };
+    icon.className = `fa-solid ${icons[state] || 'fa-circle'}`;
+}
+
+function setPhase(label, badgeClass) {
+    const b = document.getElementById('phase-badge');
+    b.innerText = label;
+    b.className = `badge ${badgeClass}`;
+}
+
+// ============================================================
+// RESULT AND ERROR PANELS
+// ============================================================
+function showResultPanel(r) {
+    document.getElementById('error-panel').style.display = 'none';
+    const panel = document.getElementById('result-panel');
+    panel.style.display = 'block';
+
+    const win   = r.window_start ? `${new Date(r.window_start).toLocaleTimeString()} → ${new Date(r.window_end).toLocaleTimeString()}` : '—';
+    const cover = r.actual_coverage_minutes != null ? `${r.actual_coverage_minutes.toFixed(1)} min (${(r.coverage_ratio * 100).toFixed(1)}%)` : '—';
+    const gaps  = r.data_gaps_detected > 0 ? `${r.data_gaps_detected} detected (largest ${r.largest_gap_seconds}s)` : '0 detected';
+
+    const rows = [
+        ['Model Version', r.model_version || '—'],
+        ['Requested Window', `${r.window_requested_minutes} min`],
+        ['Actual Coverage', cover],
+        ['Window Boundaries', win],
+        ['Rows Usable / Fetched', `${r.rows_used_for_training} / ${r.rows_fetched}`],
+        ['Sampling Interval (Median)', r.median_sampling_interval_seconds != null ? `${r.median_sampling_interval_seconds}s` : '—'],
+        ['Significant Gaps', gaps],
+        ['Compute Duration', r.training_duration_seconds != null ? `${r.training_duration_seconds.toFixed(3)}s` : '—'],
+        ['Training Inliers/Outliers', `${r.rows_used_for_training - r.training_anomaly_count} normal / ${r.training_anomaly_count} anomalies (${r.training_anomaly_percentage}%)`],
+        ['Decision Score Range', r.score_min != null ? `${r.score_min} … ${r.score_max}` : '—'],
+        ['Features Configured', (r.features_used || []).join(', ')],
+    ];
+
+    document.getElementById('result-grid').innerHTML =
+        rows.map(([k, v]) => `<div class="vg-row"><span class="vg-key">${k}</span><span class="vg-val">${v}</span></div>`).join('');
+
+    const warnEl = document.getElementById('result-warning');
+    if (r.warning) { warnEl.innerText = r.warning; warnEl.style.display = 'block'; }
+    else           { warnEl.style.display = 'none'; }
+}
+
+function showErrorPanel(msg) {
+    document.getElementById('result-panel').style.display = 'none';
+    const ep = document.getElementById('error-panel');
+    ep.style.display = 'block';
+    document.getElementById('error-msg').innerText = msg;
+}
+
+function updateMetadataStrip(status) {
+    if (status && status.model_available && status.active_model_version) {
+        document.getElementById('meta-model-version').innerText = `v${status.active_model_version}`;
+        if (status.active_model_trained_at) {
+            document.getElementById('meta-trained-at').innerText = new Date(status.active_model_trained_at).toLocaleString();
+        }
+        if (status.last_result && status.last_result.rows_used_for_training) {
+            document.getElementById('meta-dataset-info').innerText =
+                `${status.last_result.rows_used_for_training} rows (${status.last_result.actual_coverage_minutes}m)`;
+        }
+        activeModelAvailable = true;
+        activeModelVersion = status.active_model_version;
+    }
+}
+
+// ============================================================
+// TRAINING WORKFLOW
+// ============================================================
+async function startTraining() {
+    await detectBackendPort();
+    const minutes = parseInt(document.getElementById('timeWindowSelect').value);
+    const btn     = document.getElementById('btn-start-train');
+
+    // Reset UI
+    document.getElementById('result-panel').style.display = 'none';
+    document.getElementById('error-panel').style.display  = 'none';
+    resetSteps();
+    btn.disabled = true;
+    setPhase('STARTING…', 'bg-warning text-dark');
+    stopExecTimer(null);
+
+    let resp;
+    try {
+        resp = await fetch(`${ML_BACKEND_URL}/train/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ window_minutes: minutes, contamination: 0.05 })
+        });
+    } catch (e) {
+        finishTraining(null, 'Cannot reach ML backend at ' + ML_BACKEND_URL + '. Is FastAPI running?');
+        return;
+    }
+
+    const data = await resp.json();
+    if (!resp.ok) {
+        finishTraining(null, data.detail || 'Backend returned error.');
+        return;
+    }
+
+    // Backend accepted — start wall-clock timer & poll status
+    startExecTimer();
+    setStep('step-fetch', 'active');
+    setPhase('FETCHING DATA', 'bg-primary');
+    document.getElementById('pipeline-status-text').innerText = 'Fetching historical data…';
+    startStatusPolling();
+}
+
+function startStatusPolling() {
+    if (statusPollInt) clearInterval(statusPollInt);
+    statusPollInt = setInterval(pollStatus, 800);
+}
+
+function stopStatusPolling() {
+    if (statusPollInt) { clearInterval(statusPollInt); statusPollInt = null; }
+}
+
+async function pollStatus() {
+    let data;
+    try {
+        const r = await fetch(`${ML_BACKEND_URL}/train/status`);
+        data = await r.json();
+    } catch (e) {
+        return;
+    }
+
+    updateMetadataStrip(data);
+    const phase = data.training_phase;
+
+    if (phase === 'fetching_data') {
+        setStep('step-fetch', 'active');
+        setPhase('FETCHING DATA', 'bg-primary');
+        document.getElementById('pipeline-status-text').innerText = 'Querying Supabase sensor_data…';
+    } else if (phase === 'validating_data') {
+        setStep('step-fetch', 'done');
+        setStep('step-validate', 'active');
+        setPhase('VALIDATING DATA', 'bg-primary');
+        document.getElementById('pipeline-status-text').innerText = 'Checking coverage & gaps…';
+    } else if (phase === 'training') {
+        setStep('step-fetch', 'done');
+        setStep('step-validate', 'done');
+        setStep('step-train', 'active');
+        setPhase('FITTING MODEL', 'bg-primary');
+        document.getElementById('pipeline-status-text').innerText = 'Fitting Isolation Forest…';
+    } else if (phase === 'saving_model') {
+        setStep('step-fetch', 'done');
+        setStep('step-validate', 'done');
+        setStep('step-train', 'done');
+        setStep('step-save', 'active');
+        setPhase('SAVING MODEL', 'bg-primary');
+        document.getElementById('pipeline-status-text').innerText = 'Writing model atomically…';
+    } else if (phase === 'completed') {
+        stopStatusPolling();
+        STEP_IDS.forEach(id => setStep(id, 'done'));
+        const res = data.last_result || {};
+        const durSec = res.training_duration_seconds || data.elapsed_seconds;
+        stopExecTimer(durSec);
+        setPhase('COMPLETED', 'bg-success');
+        document.getElementById('pipeline-status-text').innerText = 'Training complete.';
+        showResultPanel(res);
+        document.getElementById('btn-start-train').disabled = false;
+        
+        // Auto-run live scoring with new model
+        await runLiveScoring(50);
+        return;
+    } else if (phase === 'failed') {
+        stopStatusPolling();
+        const res = data.last_result || {};
+        const msg = res.error || 'Training failed. See backend logs.';
+        stopExecTimer(data.elapsed_seconds || null);
+        setPhase('FAILED', 'bg-danger');
+        document.getElementById('pipeline-status-text').innerText = 'Training failed.';
+        STEP_IDS.forEach(id => setStep(id, 'pending'));
+        showErrorPanel(msg);
+        document.getElementById('btn-start-train').disabled = false;
+        return;
+    }
+}
+
+function finishTraining(result, errMsg) {
+    stopStatusPolling();
+    stopExecTimer(null);
+    document.getElementById('btn-start-train').disabled = false;
+    if (errMsg) {
+        setPhase('FAILED', 'bg-danger');
+        showErrorPanel(errMsg);
+    } else {
+        setPhase('COMPLETED', 'bg-success');
+        if (result) showResultPanel(result);
+    }
+}
+
+// ============================================================
+// PAGE INITIALIZATION
+// ============================================================
+window.addEventListener('DOMContentLoaded', async () => {
+    await detectBackendPort();
+    initChart();
+    await fetchSensorData();
+    setupRealtime();
+
+    // Query status on load
+    try {
+        const r = await fetch(`${ML_BACKEND_URL}/train/status`);
+        if (r.ok) {
+            const data = await r.json();
+            updateMetadataStrip(data);
+        }
+    } catch (_) {}
+
+    // Fallback passive polling every 6 seconds
+    setInterval(fetchSensorData, 6000);
+});
+</script>
+</body>
+</html>
